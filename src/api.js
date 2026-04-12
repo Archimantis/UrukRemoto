@@ -1,14 +1,38 @@
-// api.js - API de Sincronização Completa
+// api.js - API de Sincronização Uruk (versão fundida)
 // Endpoints localizados em /api/v1
+
+require('dotenv').config();
 
 const express = require('express');
 const { Pool } = require('pg');
 const crypto = require('crypto');
+const helmet = require('helmet');
+const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
-app.use(express.json());
 
-// Configuração do banco de dados
+// ==================== MIDDLEWARE DE SEGURANÇA ====================
+app.use(helmet());
+app.use(cors({ origin: '*', methods: ['GET', 'POST', 'OPTIONS'], allowedHeaders: ['Content-Type', 'Authorization'] }));
+app.use(express.json({ limit: '10mb' }));
+
+// Rate limiting global
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  message: { error: 'Muitas requisições. Aguarde 15 minutos.' }
+});
+app.use(globalLimiter);
+
+// Rate limiting para autenticação
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  message: { error: 'Muitas tentativas. Aguarde 15 minutos.' }
+});
+
+// ==================== CONFIGURAÇÃO DO BANCO DE DADOS ====================
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
   port: process.env.DB_PORT || 5432,
@@ -17,7 +41,7 @@ const pool = new Pool({
   password: process.env.DB_PASSWORD || 'uruk123',
 });
 
-// Middleware de autenticação
+// ==================== MIDDLEWARE DE AUTENTICAÇÃO ====================
 const authenticate = async (req, res, next) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) {
@@ -42,7 +66,7 @@ const authenticate = async (req, res, next) => {
 // ==================== ENDPOINTS DE AUTENTICAÇÃO ====================
 
 // Registro de usuário
-app.post('/api/v1/auth/register', async (req, res) => {
+app.post('/api/v1/auth/register', authLimiter, async (req, res) => {
   const { email, password, name } = req.body;
 
   if (!email || !password) {
@@ -69,7 +93,7 @@ app.post('/api/v1/auth/register', async (req, res) => {
 });
 
 // Login
-app.post('/api/v1/auth/login', async (req, res) => {
+app.post('/api/v1/auth/login', authLimiter, async (req, res) => {
   const { email, password } = req.body;
 
   try {
@@ -274,6 +298,11 @@ app.get('/api/v1/sync/orcamentocategoria', authenticate, (req, res) => pullTable
 
 // ==================== ENDPOINTS ESPECÍFICOS ====================
 
+// Health check
+app.get('/health', (_, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '1.0.0' });
+});
+
 // Pull completo (todas as tabelas)
 app.get('/api/v1/sync/full', authenticate, async (req, res) => {
   const tables = [
@@ -319,15 +348,21 @@ app.get('/api/v1/sync/status', authenticate, async (req, res) => {
   }
 });
 
-// Health check
-app.get('/api/v1/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ error: `Rota não encontrada: ${req.method} ${req.path}` });
+});
+
+// Error handler
+app.use((err, req, res, next) => {
+  console.error(err);
+  res.status(err.status || 500).json({ error: err.message || 'Erro interno do servidor' });
 });
 
 // ==================== INICIALIZAÇÃO ====================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`API rodando na porta ${PORT}`);
+  console.log(`\n🚀 uruk-api na porta ${PORT} | ${process.env.NODE_ENV || 'development'}\n`);
   console.log(`Endpoints disponíveis em /api/v1`);
 });
 

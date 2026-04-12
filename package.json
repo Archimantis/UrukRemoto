@@ -4,8 +4,8 @@
   "description": "API de sincronização para Uruk - Gestão Financeira",
   "main": "api.js",
   "scripts": {
-    "start": "node api.js",
-    "dev": "nodemon api.js",
+    "start": "node src/api.js",
+    "dev": "nodemon src/api.js",
     "migrate": "node scripts/migrate.js",
     "db:init": "psql -U uruk -d uruk_db -f ddl_completo.sql",
     "test": "node test_api.js"
