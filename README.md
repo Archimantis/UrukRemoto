@@ -1,179 +1,610 @@
-# uruk-api — REST API de Sincronização
+Aqui está a documentação completa da API formatada em Markdown para ser incluída no README.md do GitHub:
 
-API gerada automaticamente a partir da DDL `uruk.ddl`.  
-Backend: Node.js + Express + PostgreSQL.
+```markdown
+# 🚀 Uruk API - Documentação Oficial
+
+API de sincronização para o aplicativo Uruk - Gestão Financeira. Desenvolvida com Node.js, Express e PostgreSQL.
+
+## 📋 Índice
+
+- [Visão Geral](#visão-geral)
+- [Configuração](#configuração)
+- [Autenticação](#autenticação)
+- [Endpoints](#endpoints)
+  - [Health Check](#health-check)
+  - [Autenticação](#endpoints-de-autenticação)
+  - [Sincronização - Push](#sincronização-push-envio)
+  - [Sincronização - Pull](#sincronização-pull-busca)
+  - [Utilitários](#endpoints-utilitários)
+- [Modelos de Dados](#modelos-de-dados)
+- [Códigos de Erro](#códigos-de-erro)
+- [Rate Limiting](#rate-limiting)
+- [Exemplos de Uso](#exemplos-de-uso)
+- [Segurança](#segurança)
 
 ---
 
-## Instalação
+## 📖 Visão Geral
+
+A Uruk API é responsável por gerenciar a sincronização de dados financeiros entre o aplicativo móvel e o servidor central. Suporta operações de push (envio) e pull (busca) para 14 tabelas principais, com controle de versão e status de sincronização.
+
+### Tecnologias
+
+- **Runtime**: Node.js
+- **Framework**: Express.js
+- **Banco de Dados**: PostgreSQL
+- **Autenticação**: Token Bearer (UUID v4)
+- **Segurança**: Helmet, CORS, Rate Limiting
+
+### Pré-requisitos
+
+- Node.js 14+
+- PostgreSQL 12+
+- npm ou yarn
+
+---
+
+## ⚙️ Configuração
+
+### 1. Instalação
 
 ```bash
+# Clonar o repositório
+git clone https://github.com/seu-usuario/uruk-api.git
+cd uruk-api
+
+# Instalar dependências
 npm install
-cp .env.example .env        # configure as credenciais
-npm run migrate             # cria tabela users, refresh_tokens e índices de sync
-npm run dev                 # desenvolvimento
-npm start                   # produção
+
+# Copiar arquivo de configuração
+cp .env.example .env
+
+# Editar variáveis de ambiente
+vi .env
+```
+
+### 2. Variáveis de Ambiente
+
+```env
+# Servidor
+PORT=3000
+NODE_ENV=production
+
+# Banco de Dados
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=uruk_db
+DB_USER=uruk
+DB_PASSWORD=uruk123
+```
+
+### 3. Executar
+
+```bash
+# Modo desenvolvimento
+npm run dev
+
+# Modo produção
+npm start
 ```
 
 ---
 
-## Tabelas sincronizáveis
+## 🔐 Autenticação
 
-| Tabela | PK | Campos de dados |
-|---|---|---|
-| aliases | uuid | uuid_contraparte, nome |
-| categoria | uuid | descricao |
-| contas | uuid | nome, uuid_tipo_conta, uuid_instituicao |
-| contrapartes | uuid | nome, descricao |
-| cotacao | uuid | uuid_moeda, taxa_compra, taxa_venda, data_cotacao |
-| detalhecategoria | uuid | descricao, uuid_categoria |
-| instituicoes | uuid | nome, endereco, telefone, observacao |
-| lancamentodetalhe | uuid_lancamento + uuid_detalhecategoria | valor, uuid_moeda |
-| lancamentos | uuid | uuid_contas, uuid_operacao, data, uuid_moeda, uuid_contraparte, descricao |
-| locais | uuid | uuid_contraparte, latitude, longitude, endereco, observacao |
-| moeda | uuid | cod, nome |
-| orcamentocategoria | uuid | uuid_orcamento, uuid_categoria, valor, uuid_moeda |
-| orcamentos | uuid | nome, inicio, termino |
-| tipo_conta | uuid | descricao |
+Todos os endpoints de sincronização requerem um token Bearer no cabeçalho da requisição.
 
-Campos de sync presentes em todas: `sync_id`, `sync_status`, `version`, `created_at`, `updated_at`, `is_deleted`
+### Obter Token
+
+```bash
+POST /api/v1/auth/login
+```
+
+### Formato do Token
+
+```
+Authorization: Bearer <access_token>
+```
+
+### Fluxo de Autenticação
+
+1. **Registrar** → Criar nova conta
+2. **Login** → Obter `access_token` e `refresh_token`
+3. **Usar token** → Incluir em todas as requisições sincronizadas
+4. **Refresh** → Renovar token quando expirar
+5. **Logout** → Invalidar token
 
 ---
 
-## Endpoints
+## 📡 Endpoints
 
-| Método | Rota | Auth | Descrição |
-|---|---|---|---|
-| POST | /auth/register | — | Cadastro |
-| POST | /auth/login | — | Login |
-| POST | /auth/refresh | — | Renova token |
-| POST | /auth/logout | — | Logout |
-| POST | /sync/push | JWT | Android → Servidor |
-| GET | /sync/pull?since= | JWT | Servidor → Android (delta) |
-| GET | /sync/full | JWT | Sync completa inicial |
-| GET | /sync/status | JWT | Contagem por tabela |
-| GET | /health | — | Status da API |
+### Health Check
 
----
+Endpoint público para verificar o status da API.
 
-## Exemplos
+| Método | Endpoint | Autenticação | Descrição |
+|--------|----------|--------------|-----------|
+| `GET` | `/health` | ❌ | Verifica se a API está online |
 
-### Login
-```bash
-curl -X POST http://localhost:3000/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"user@email.com","password":"senha123","device_id":"android-uuid"}'
-```
-
-### Push — enviar lançamento criado offline
-```bash
-curl -X POST http://localhost:3000/sync/push \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "device_id": "android-uuid",
-    "records": [
-      {
-        "table": "lancamentos",
-        "uuid": "novo-uuid-aqui",
-        "uuid_contas": "uuid-da-conta",
-        "uuid_operacao": "D",
-        "data": "2026-03-19",
-        "uuid_moeda": "BRL",
-        "uuid_contraparte": null,
-        "descricao": "Supermercado",
-        "sync_id": "sync-device-001",
-        "sync_status": "pending",
-        "version": 1,
-        "created_at": "2026-03-19T10:00:00Z",
-        "updated_at": "2026-03-19T10:00:00Z",
-        "is_deleted": 0
-      }
-    ]
-  }'
-```
-
-### Push — soft delete de uma categoria
-```bash
-# Basta enviar o registro com is_deleted=1 e updated_at atualizado
+**Resposta de sucesso (200 OK):**
+```json
 {
-  "table": "categoria",
-  "uuid": "uuid-da-categoria",
-  "descricao": "Moradia",
-  "sync_id": "sync-del-001",
-  "sync_status": "pending",
-  "version": 2,
-  "created_at": "2026-03-14T00:00:00",
-  "updated_at": "2026-03-19T12:00:00Z",
-  "is_deleted": 1
+  "status": "ok",
+  "timestamp": "2026-04-12T12:32:42.000Z",
+  "version": "1.0.0"
 }
 ```
 
-### Pull — buscar novidades desde o último sync
-```bash
-curl "http://localhost:3000/sync/pull?since=2026-03-18T00:00:00Z" \
-  -H "Authorization: Bearer <token>"
+---
 
-# Filtrar apenas algumas tabelas:
-curl "http://localhost:3000/sync/pull?since=2026-03-18T00:00:00Z&tables=lancamentos,lancamentodetalhe" \
-  -H "Authorization: Bearer <token>"
+### Endpoints de Autenticação
+
+Base: `/api/v1/auth`
+
+| Método | Endpoint | Rate Limit | Descrição |
+|--------|----------|------------|-----------|
+| `POST` | `/register` | 30/15min | Criar nova conta |
+| `POST` | `/login` | 30/15min | Login e obtenção de tokens |
+| `POST` | `/refresh` | global | Renovar token de acesso |
+| `POST` | `/logout` | global | Logout e invalidação |
+
+#### Registrar Usuário
+
+```http
+POST /api/v1/auth/register
+Content-Type: application/json
 ```
 
-### Resposta do pull
+**Request Body:**
 ```json
 {
-  "server_time": "2026-03-19T15:00:00Z",
-  "count": 3,
+  "email": "usuario@email.com",
+  "password": "senha123",
+  "name": "Nome do Usuário"
+}
+```
+
+**Resposta (201 Created):**
+```json
+{
+  "message": "Usuário criado com sucesso",
+  "uuid": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+#### Login
+
+```http
+POST /api/v1/auth/login
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "email": "usuario@email.com",
+  "password": "senha123"
+}
+```
+
+**Resposta (200 OK):**
+```json
+{
+  "access_token": "550e8400-e29b-41d4-a716-446655440000",
+  "refresh_token": "660e8400-e29b-41d4-a716-446655440001",
+  "user": {
+    "uuid": "550e8400-e29b-41d4-a716-446655440000",
+    "email": "usuario@email.com",
+    "nome": "Nome do Usuário"
+  }
+}
+```
+
+#### Refresh Token
+
+```http
+POST /api/v1/auth/refresh
+Authorization: Bearer <access_token>
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "refresh_token": "660e8400-e29b-41d4-a716-446655440001"
+}
+```
+
+**Resposta (200 OK):**
+```json
+{
+  "access_token": "770e8400-e29b-41d4-a716-446655440002"
+}
+```
+
+#### Logout
+
+```http
+POST /api/v1/auth/logout
+Authorization: Bearer <access_token>
+```
+
+**Resposta (200 OK):**
+```json
+{
+  "message": "Logout realizado"
+}
+```
+
+---
+
+### Sincronização - Push (Envio)
+
+Envia dados do cliente para o servidor. Requer autenticação.
+
+**Base:** `/api/v1/sync/`
+
+| Método | Endpoint | Tabela |
+|--------|----------|--------|
+| `POST` | `/categoria` | categoria |
+| `POST` | `/tipo_conta` | tipo_conta |
+| `POST` | `/instituicoes` | instituicoes |
+| `POST` | `/contas` | contas |
+| `POST` | `/contrapartes` | contrapartes |
+| `POST` | `/aliases` | aliases |
+| `POST` | `/locais` | locais |
+| `POST` | `/moeda` | moeda |
+| `POST` | `/cotacao` | cotacao |
+| `POST` | `/detalhecategoria` | detalhecategoria |
+| `POST` | `/lancamentos` | lancamentos |
+| `POST` | `/lancamentodetalhe` | lancamentodetalhe |
+| `POST` | `/orcamentos` | orcamentos |
+| `POST` | `/orcamentocategoria` | orcamentocategoria |
+
+#### Formato da Requisição
+
+```http
+POST /api/v1/sync/moeda
+Authorization: Bearer <access_token>
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
   "records": [
     {
-      "table": "lancamentos",
-      "uuid": "...",
-      "uuid_contas": "...",
-      "uuid_operacao": "D",
-      "data": "2026-03-19",
-      "uuid_moeda": "BRL",
-      "descricao": "Supermercado",
-      "sync_id": "...",
+      "uuid": "550e8400-e29b-41d4-a716-446655440000",
+      "cod": "BRL",
+      "nome": "Real Brasileiro",
       "sync_status": "synced",
-      "version": 1,
-      "created_at": "...",
-      "updated_at": "...",
-      "is_deleted": 0
+      "version": 1
     }
   ]
 }
 ```
 
-### Status
+**Resposta (200 OK):**
+```json
+{
+  "message": "1 registros sincronizados com sucesso"
+}
+```
+
+---
+
+### Sincronização - Pull (Busca)
+
+Busca dados do servidor para o cliente. Requer autenticação.
+
+**Base:** `/api/v1/sync/`
+
+| Método | Endpoint | Tabela |
+|--------|----------|--------|
+| `GET` | `/categoria` | categoria |
+| `GET` | `/tipo_conta` | tipo_conta |
+| `GET` | `/instituicoes` | instituicoes |
+| `GET` | `/contas` | contas |
+| `GET` | `/contrapartes` | contrapartes |
+| `GET` | `/aliases` | aliases |
+| `GET` | `/locais` | locais |
+| `GET` | `/moeda` | moeda |
+| `GET` | `/cotacao` | cotacao |
+| `GET` | `/detalhecategoria` | detalhecategoria |
+| `GET` | `/lancamentos` | lancamentos |
+| `GET` | `/lancamentodetalhe` | lancamentodetalhe |
+| `GET` | `/orcamentos` | orcamentos |
+| `GET` | `/orcamentocategoria` | orcamentocategoria |
+
+#### Formato da Requisição
+
+```http
+GET /api/v1/sync/moeda?last_sync=2026-01-01T00:00:00Z
+Authorization: Bearer <access_token>
+```
+
+**Parâmetros Query:**
+| Parâmetro | Tipo | Descrição |
+|-----------|------|-----------|
+| `last_sync` | string (opcional) | Data ISO para filtrar registros atualizados após este momento |
+| `device_id` | string (opcional) | Identificador do dispositivo |
+
+**Resposta (200 OK):**
+```json
+{
+  "table": "moeda",
+  "records": [
+    {
+      "uuid": "550e8400-e29b-41d4-a716-446655440000",
+      "cod": "BRL",
+      "nome": "Real Brasileiro",
+      "created_at": "2026-01-01T00:00:00.000Z",
+      "updated_at": "2026-04-12T00:00:00.000Z",
+      "is_deleted": 0
+    }
+  ],
+  "count": 1,
+  "timestamp": "2026-04-12T12:32:42.000Z"
+}
+```
+
+---
+
+### Endpoints Utilitários
+
+| Método | Endpoint | Autenticação | Descrição |
+|--------|----------|--------------|-----------|
+| `GET` | `/api/v1/sync/full` | ✅ | Pull completo de todas as tabelas |
+| `GET` | `/api/v1/sync/status` | ✅ | Status da sincronização por tabela |
+
+#### Pull Completo
+
+```http
+GET /api/v1/sync/full
+Authorization: Bearer <access_token>
+```
+
+**Resposta (200 OK):**
+```json
+{
+  "categoria": [...],
+  "tipo_conta": [...],
+  "instituicoes": [...],
+  "contas": [...],
+  "contrapartes": [...],
+  "aliases": [...],
+  "locais": [...],
+  "moeda": [...],
+  "cotacao": [...],
+  "detalhecategoria": [...],
+  "lancamentos": [...],
+  "lancamentodetalhe": [...],
+  "orcamentos": [...],
+  "orcamentocategoria": [...]
+}
+```
+
+#### Status da Sincronização
+
+```http
+GET /api/v1/sync/status
+Authorization: Bearer <access_token>
+```
+
+**Resposta (200 OK):**
+```json
+{
+  "categoria": {
+    "total": "25",
+    "synced": "25",
+    "last_update": "2026-04-12T10:00:00.000Z"
+  },
+  "moeda": {
+    "total": "5",
+    "synced": "5",
+    "last_update": "2026-04-12T10:00:00.000Z"
+  }
+}
+```
+
+---
+
+## 🗄️ Modelos de Dados
+
+### Campos Comuns
+
+Todas as tabelas possuem os seguintes campos:
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `uuid` | string (UUID v4) | Identificador único primário |
+| `sync_id` | string | ID de sincronização (igual ao uuid) |
+| `sync_status` | string | Status: 'synced' ou 'pending' |
+| `version` | integer | Número de versão para controle de conflitos |
+| `created_at` | timestamp | Data de criação |
+| `updated_at` | timestamp | Última atualização |
+| `is_deleted` | integer | 0 = ativo, 1 = deletado |
+
+### Tabela: moeda
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `cod` | string (3) | Código da moeda (BRL, USD, EUR) |
+| `nome` | string | Nome da moeda |
+
+### Tabela: categoria
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `descricao` | string | Nome da categoria |
+
+### Tabela: contas
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `nome` | string | Nome da conta |
+| `uuid_tipo_conta` | string (UUID) | Referência ao tipo de conta |
+| `uuid_instituicao` | string (UUID) | Referência à instituição |
+
+### Tabela: lancamentos
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `uuid_contas` | string (UUID) | Conta de origem/destino |
+| `uuid_operacao` | string | 'D' (Débito) ou 'C' (Crédito) |
+| `data` | string | Data do lançamento (ISO) |
+| `uuid_moeda` | string | Código da moeda (BRL, USD) |
+| `uuid_contraparte` | string (UUID) | Contraparte da transação |
+| `descricao` | string | Descrição do lançamento |
+
+---
+
+## ⚠️ Códigos de Erro
+
+| Código | Significado | Possível Causa |
+|--------|-------------|----------------|
+| `400` | Bad Request | Corpo da requisição inválido |
+| `401` | Unauthorized | Token não fornecido ou inválido |
+| `404` | Not Found | Endpoint não existe |
+| `409` | Conflict | Email já registrado |
+| `429` | Too Many Requests | Rate limit excedido |
+| `500` | Internal Server Error | Erro no servidor |
+
+### Exemplo de Resposta de Erro
+
+```json
+{
+  "error": "Token não fornecido"
+}
+```
+
+---
+
+## 🚦 Rate Limiting
+
+A API implementa duas camadas de rate limiting:
+
+| Tipo | Limite | Janela | Endpoints afetados |
+|------|--------|--------|---------------------|
+| **Global** | 300 requisições | 15 minutos | Todos |
+| **Autenticação** | 30 tentativas | 15 minutos | `/api/v1/auth/*` |
+
+**Cabeçalhos de Rate Limit:**
+```
+X-RateLimit-Limit: 300
+X-RateLimit-Remaining: 299
+X-RateLimit-Reset: 1775998063
+```
+
+---
+
+## 💡 Exemplos de Uso
+
+### 1. Fluxo Completo de Sincronização
+
 ```bash
-curl "http://localhost:3000/sync/status" \
-  -H "Authorization: Bearer <token>"
+# 1. Login
+ACCESS_TOKEN=$(curl -s -X POST http://localhost:3000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"usuario@email.com","password":"senha123"}' \
+  | jq -r '.access_token')
+
+# 2. Enviar dados (Push)
+curl -X POST http://localhost:3000/api/v1/sync/moeda \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -d '{
+    "records": [{
+      "uuid": "550e8400-e29b-41d4-a716-446655440000",
+      "cod": "BRL",
+      "nome": "Real Brasileiro",
+      "sync_status": "synced",
+      "version": 1
+    }]
+  }'
+
+# 3. Buscar dados (Pull)
+curl -X GET "http://localhost:3000/api/v1/sync/moeda?last_sync=2026-01-01T00:00:00Z" \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+
+# 4. Logout
+curl -X POST http://localhost:3000/api/v1/auth/logout \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+### 2. Sincronização Completa
+
+```bash
+# Buscar todos os dados de uma vez
+curl -X GET http://localhost:3000/api/v1/sync/full \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  | jq '.'
+```
+
+### 3. Verificar Status
+
+```bash
+# Verificar status da sincronização por tabela
+curl -X GET http://localhost:3000/api/v1/sync/status \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  | jq '.'
 ```
 
 ---
 
-## Fluxo de Sync no Android
+## 🔒 Segurança
 
-```
-App inicia / reconecta
-  ↓
-1. GET /sync/pull?since=<ultimo_sync_salvo>
-   → aplica registros no Room (incluindo is_deleted=1)
-  ↓
-2. POST /sync/push com registros locais com sync_status='pending'
-   → verifica conflicts na resposta
-   → marca como sync_status='synced' os accepted
-  ↓
-3. Salva server_time como novo ultimo_sync
-  ↓
-4. Repete via WorkManager a cada 15 min ou ao reconectar
-```
+### Proteções Implementadas
+
+- **Helmet.js**: Configura cabeçalhos HTTP seguros
+- **CORS**: Configuração restrita de origens
+- **Rate Limiting**: Prevenção contra ataques de força bruta
+- **Hash de Senhas**: SHA-256 (em produção, usar bcrypt)
+- **Token Expiration**: Tokens expiram em 7 dias
+
+### Recomendações para Produção
+
+1. **Use HTTPS** sempre em produção
+2. **Altere o rate limiting** conforme necessidade
+3. **Substitua SHA-256 por bcrypt** para hash de senhas
+4. **Configure CORS** com origens específicas, não `*`
+5. **Mantenha o banco de dados** em rede isolada
 
 ---
 
-## Resolução de Conflitos
+## 📝 Licença
 
-A estratégia é **last-write-wins por `updated_at`**:
-- Se `updated_at` do cliente > servidor → cliente vence, servidor é atualizado
-- Se `updated_at` do cliente < servidor → conflito reportado, servidor mantém sua versão
-- O Android deve re-baixar via pull para obter a versão do servidor nos conflitos
+MIT
+
+---
+
+## 🤝 Contribuição
+
+1. Fork o projeto
+2. Crie sua branch (`git checkout -b feature/nova-feature`)
+3. Commit suas mudanças (`git commit -m 'Adiciona nova feature'`)
+4. Push para a branch (`git push origin feature/nova-feature`)
+5. Abra um Pull Request
+
+---
+
+## 📞 Suporte
+
+Para dúvidas ou problemas, abra uma issue no repositório ou contate a equipe de desenvolvimento.
+
+---
+
+**Versão:** 1.0.0  
+**Última atualização:** Abril 2026
+```
+
+Esta documentação está pronta para ser copiada e colada no seu arquivo `README.md` do GitHub. Ela inclui:
+
+- ✅ Visão geral e tecnologias
+- ✅ Configuração e instalação
+- ✅ Todos os 35 endpoints documentados
+- ✅ Modelos de dados
+- ✅ Códigos de erro
+- ✅ Rate limiting
+- ✅ Exemplos práticos com curl
+- ✅ Segurança e recomendações
