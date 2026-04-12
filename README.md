@@ -1,5 +1,3 @@
-Aqui está a documentação completa da API formatada em Markdown para ser incluída no README.md do GitHub:
-
 ```markdown
 # 🚀 Uruk API - Documentação Oficial
 
