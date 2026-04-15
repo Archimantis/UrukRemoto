@@ -89,7 +89,7 @@ CREATE INDEX IF NOT EXISTS idx_tipo_conta_updated_at ON public.tipo_conta(update
 CREATE INDEX IF NOT EXISTS idx_tipo_conta_is_deleted  ON public.tipo_conta(is_deleted);
 
 -- moeda (índices já existem na DDL original, criação idempotente)
-CREATE UNIQUE INDEX IF NOT EXISTS idx_moeda_cod        ON public.moeda(cod);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_moeda_codigo     ON public.moeda(codigo);
 CREATE INDEX        IF NOT EXISTS idx_moeda_updated_at ON public.moeda(updated_at);
 CREATE INDEX        IF NOT EXISTS idx_moeda_is_deleted ON public.moeda(is_deleted);
 

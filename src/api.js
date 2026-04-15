@@ -182,29 +182,52 @@ async function syncTable(req, res, tableName, schema, idField = 'uuid') {
       if (existing.rows.length === 0) {
         // Inserir novo registro
         const columns = Object.keys(data);
-        const values = columns.map((_, i) => `$${i + 2}`);
-        const insertQuery = `
-          INSERT INTO ${schema}.${tableName} (${idField}, ${columns.join(', ')}, sync_id, sync_status, version, created_at, updated_at, is_deleted)
-          VALUES ($1, ${values.join(', ')}, $1, $2, 1, NOW(), NOW(), 0)
-        `;
-        await client.query(insertQuery, [uuid, sync_status || 'synced', ...Object.values(data)]);
+
+	const values = columns.map((_, i) => `$${i + 2}`);
+	//const insertQuery = `
+	//  INSERT INTO ${schema}.${tableName} (${idField}, ${columns.join(', ')}, sync_status, version, created_at, updated_at, is_deleted)
+	//  VALUES ($1, ${values.join(', ')}, $${columns.length + 2}, 1, NOW(), NOW(), 0)
+	//`;
+	const insertQuery = `
+	  INSERT INTO ${schema}.${tableName} (${idField}, ${columns.join(', ')})
+	  VALUES ($1, ${values.join(', ')})
+	`;
+	// TODO - remover quando do envio para produção
+	console.log(`${insertQuery}`);
+
+	await client.query(insertQuery, [uuid, ...Object.values(data), sync_status || 'synced']);
       } else if (existing.rows[0].version < version) {
         // Atualizar registro existente
-        const setClause = Object.keys(data).map((key, i) => `${key} = $${i + 3}`).join(', ');
-        const updateQuery = `
-          UPDATE ${schema}.${tableName}
-          SET ${setClause}, sync_status = $2, version = $3, updated_at = NOW()
-          WHERE ${idField} = $1
-        `;
-        await client.query(updateQuery, [uuid, sync_status || 'synced', version, ...Object.values(data)]);
+	      
+	const dataKeys = Object.keys(data);
+	const dataValues = Object.values(data);
+
+	const setClause = [
+	  ...dataKeys.map((key, i) => `${key} = $${i + 4}`),
+	  `sync_status = $2`,
+	  `version = $3`,
+	  `updated_at = NOW()`
+	].join(', ');
+
+	const updateQuery = `
+	  UPDATE ${schema}.${tableName}
+	  SET ${setClause}
+	  WHERE ${idField} = $1
+	`;
+
+	// TODO - remover quando do envio para produção
+	console.log(`${updateQuery}`);
+
+	await client.query(updateQuery, [uuid, sync_status || 'synced', version, ...dataValues]) 
       }
     }
 
-    await client.query('COMMIT');
+    // TODO - await client.query('COMMIT');
+    await client.query('ROLLBACK');
     res.json({ message: `${records.length} registros sincronizados com sucesso` });
   } catch (err) {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: `Erro ao sincronizar ${tableName}` });
+    res.status(500).json({ error: `Erro ao sincronizar ${tableName}: ${err.message}` });
   } finally {
     client.release();
   }

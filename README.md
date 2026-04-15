@@ -273,7 +273,7 @@ Content-Type: application/json
   "records": [
     {
       "uuid": "550e8400-e29b-41d4-a716-446655440000",
-      "cod": "BRL",
+      "codigo": "BRL",
       "nome": "Real Brasileiro",
       "sync_status": "synced",
       "version": 1
@@ -334,7 +334,7 @@ Authorization: Bearer <access_token>
   "records": [
     {
       "uuid": "550e8400-e29b-41d4-a716-446655440000",
-      "cod": "BRL",
+      "codigo": "BRL",
       "nome": "Real Brasileiro",
       "created_at": "2026-01-01T00:00:00.000Z",
       "updated_at": "2026-04-12T00:00:00.000Z",
@@ -425,10 +425,10 @@ Todas as tabelas possuem os seguintes campos:
 
 ### Tabela: moeda
 
-| Campo | Tipo | Descrição |
-|-------|------|-----------|
-| `cod` | string (3) | Código da moeda (BRL, USD, EUR) |
-| `nome` | string | Nome da moeda |
+| Campo    | Tipo | Descrição |
+|----------|------|-----------|
+| `codigo` | string (3) | Código da moeda (BRL, USD, EUR) |
+| `nome`   | string | Nome da moeda |
 
 ### Tabela: categoria
 
@@ -514,7 +514,7 @@ curl -X POST http://localhost:3000/api/v1/sync/moeda \
   -d '{
     "records": [{
       "uuid": "550e8400-e29b-41d4-a716-446655440000",
-      "cod": "BRL",
+      "codigo": "BRL",
       "nome": "Real Brasileiro",
       "sync_status": "synced",
       "version": 1

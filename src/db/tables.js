@@ -78,8 +78,8 @@ const SYNC_TABLES = {
 
   moeda: {
     pk: ['uuid'],
-    columns: ['uuid', 'cod', 'nome'],
-    required: ['uuid', 'cod'],
+    columns: ['uuid', 'codigo', 'nome'],
+    required: ['uuid', 'codigo'],
   },
 
   orcamentocategoria: {
