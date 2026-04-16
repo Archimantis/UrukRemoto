@@ -155,9 +155,9 @@ app.post('/api/v1/auth/logout', authenticate, async (req, res) => {
   }
 });
 
-// ==================== ENDPOINTS DE SINCRONIZAÇÃO ====================
+// ==================== HELPER GENÉRICO PARA SINCRONIZAÇÃO ====================
 
-// Helper para sincronização de tabelas
+// Helper para sincronização de tabelas com campo uuid padrão
 async function syncTable(req, res, tableName, schema, idField = 'uuid') {
   const { records, device_id } = req.body;
   const userId = req.userId;
@@ -171,7 +171,7 @@ async function syncTable(req, res, tableName, schema, idField = 'uuid') {
     await client.query('BEGIN');
 
     for (const record of records) {
-      const { uuid, sync_status, version, ...data } = record;
+      const { uuid, sync_id, sync_status, version, created_at, updated_at, is_deleted, ...data } = record;
 
       // Verificar se o registro existe
       const existing = await client.query(
@@ -182,51 +182,94 @@ async function syncTable(req, res, tableName, schema, idField = 'uuid') {
       if (existing.rows.length === 0) {
         // Inserir novo registro
         const columns = Object.keys(data);
-
-	const values = columns.map((_, i) => `$${i + 2}`);
-	//const insertQuery = `
-	//  INSERT INTO ${schema}.${tableName} (${idField}, ${columns.join(', ')}, sync_status, version, created_at, updated_at, is_deleted)
-	//  VALUES ($1, ${values.join(', ')}, $${columns.length + 2}, 1, NOW(), NOW(), 0)
-	//`;
-	const insertQuery = `
-	  INSERT INTO ${schema}.${tableName} (${idField}, ${columns.join(', ')})
-	  VALUES ($1, ${values.join(', ')})
-	`;
-	// TODO - remover quando do envio para produção
-	console.log(`${insertQuery}`);
-
-	await client.query(insertQuery, [uuid, ...Object.values(data), sync_status || 'synced']);
+        
+        // Lista completa de colunas (ordem importa)
+        const allColumns = [idField, ...columns, 'sync_id', 'sync_status', 'version', 'created_at', 'updated_at', 'is_deleted'];
+        const columnNames = allColumns.join(', ');
+        
+        // Placeholders: $1 (uuid), $2 a $n (data), $n+1 (sync_id), $n+2 (sync_status), $n+3 (version), $n+4 (created_at), $n+5 (updated_at), $n+6 (is_deleted)
+        const placeholders = allColumns.map((_, i) => `$${i + 1}`).join(', ');
+        
+        const insertQuery = `
+          INSERT INTO ${schema}.${tableName} (${columnNames})
+          VALUES (${placeholders})
+        `;
+        
+        // Montar array de parâmetros na ordem correta
+        const insertParams = [
+          uuid,
+          ...Object.values(data),
+          sync_id,
+          sync_status || 'synced',
+          version,
+          created_at || new Date(),
+          updated_at || new Date(),
+          is_deleted !== undefined ? is_deleted : 0
+        ];
+        
+        // TODO - remover quando do envio para produção
+        console.log('📝 INSERT Query:', insertQuery);
+        console.log('📊 Parâmetros:', insertParams);
+        
+        await client.query(insertQuery, insertParams);
+        
       } else if (existing.rows[0].version < version) {
         // Atualizar registro existente
-	      
-	const dataKeys = Object.keys(data);
-	const dataValues = Object.values(data);
-
-	const setClause = [
-	  ...dataKeys.map((key, i) => `${key} = $${i + 4}`),
-	  `sync_status = $2`,
-	  `version = $3`,
-	  `updated_at = NOW()`
-	].join(', ');
-
-	const updateQuery = `
-	  UPDATE ${schema}.${tableName}
-	  SET ${setClause}
-	  WHERE ${idField} = $1
-	`;
-
-	// TODO - remover quando do envio para produção
-	console.log(`${updateQuery}`);
-
-	await client.query(updateQuery, [uuid, sync_status || 'synced', version, ...dataValues]) 
+        
+        const dataKeys = Object.keys(data);
+        const dataValues = Object.values(data);
+        
+        // Campos que podem ser atualizados
+        const updateFields = [
+          ...dataKeys.map((key, i) => `${key} = $${i + 4}`),
+          'sync_id = $2',
+          'sync_status = $3',
+          'version = $4',
+          'updated_at = NOW()'
+        ];
+        
+        // Para atualizar is_deleted se fornecido
+        if (is_deleted !== undefined) {
+          updateFields.push(`is_deleted = $${dataKeys.length + 5}`);
+        }
+        
+        const setClause = updateFields.join(', ');
+        
+        const updateQuery = `
+          UPDATE ${schema}.${tableName}
+          SET ${setClause}
+          WHERE ${idField} = $1
+        `;
+        
+        // Montar array de parâmetros na ordem correta
+        const updateParams = [
+          uuid,
+          sync_id,
+          sync_status || 'synced',
+          version,
+          ...dataValues
+        ];
+        
+        // Adicionar is_deleted se necessário
+        if (is_deleted !== undefined) {
+          updateParams.push(is_deleted);
+        }
+        
+        // TODO - remover quando do envio para produção
+        console.log('📝 UPDATE Query:', updateQuery);
+        console.log('📊 Parâmetros:', updateParams);
+        
+        await client.query(updateQuery, updateParams);
       }
     }
 
-    // TODO - await client.query('COMMIT');
-    await client.query('ROLLBACK');
+    // COMMIT após todas as operações
+    await client.query('COMMIT');
     res.json({ message: `${records.length} registros sincronizados com sucesso` });
+    
   } catch (err) {
     await client.query('ROLLBACK');
+    console.error('❌ Erro na sincronização:', err);
     res.status(500).json({ error: `Erro ao sincronizar ${tableName}: ${err.message}` });
   } finally {
     client.release();
@@ -258,6 +301,187 @@ async function pullTable(req, res, tableName, schema) {
     });
   } catch (err) {
     res.status(500).json({ error: `Erro ao buscar dados de ${tableName}` });
+  }
+}
+
+// ==================== TRATAMENTO ESPECIAL PARA LANCAMENTODETALHE ====================
+
+/**
+ * Função específica para sincronizar lancamentodetalhe
+ * A tabela lancamentodetalhe possui chave primária composta por (uuid_lancamento, uuid_detalhecategoria)
+ * Não possui campo 'uuid' individual
+ */
+async function syncLancamentoDetalhe(req, res) {
+  const { records, device_id } = req.body;
+  const userId = req.userId;
+
+  if (!records || !Array.isArray(records)) {
+    return res.status(400).json({ error: 'Registros inválidos' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    for (const record of records) {
+      // Campos da chave primária composta
+      const { 
+        uuid_lancamento, 
+        uuid_detalhecategoria,
+        sync_id, 
+        sync_status, 
+        version, 
+        created_at, 
+        updated_at, 
+        is_deleted,
+        ...data 
+      } = record;
+
+      // Validação: os campos da chave primária são obrigatórios
+      if (!uuid_lancamento || !uuid_detalhecategoria) {
+        throw new Error('Campos uuid_lancamento e uuid_detalhecategoria são obrigatórios');
+      }
+
+      // Verificar se o registro existe usando a chave composta
+      const existing = await client.query(
+        `SELECT uuid_lancamento, uuid_detalhecategoria, version, sync_status 
+         FROM public.lancamentodetalhe 
+         WHERE uuid_lancamento = $1 AND uuid_detalhecategoria = $2`,
+        [uuid_lancamento, uuid_detalhecategoria]
+      );
+
+      if (existing.rows.length === 0) {
+        // Inserir novo registro
+        const dataColumns = Object.keys(data);
+        
+        // Lista completa de colunas (ordem importa)
+        const allColumns = [
+          'uuid_lancamento', 
+          'uuid_detalhecategoria',
+          ...dataColumns, 
+          'sync_id', 
+          'sync_status', 
+          'version', 
+          'created_at', 
+          'updated_at', 
+          'is_deleted'
+        ];
+        
+        const columnNames = allColumns.join(', ');
+        const placeholders = allColumns.map((_, i) => `$${i + 1}`).join(', ');
+        
+        const insertQuery = `
+          INSERT INTO public.lancamentodetalhe (${columnNames})
+          VALUES (${placeholders})
+        `;
+        
+        // Montar array de parâmetros na ordem correta
+        const insertParams = [
+          uuid_lancamento,
+          uuid_detalhecategoria,
+          ...Object.values(data),
+          sync_id,
+          sync_status || 'synced',
+          version,
+          created_at || new Date(),
+          updated_at || new Date(),
+          is_deleted !== undefined ? is_deleted : 0
+        ];
+        
+        console.log('📝 INSERT lancamentodetalhe:', insertQuery);
+        console.log('📊 Parâmetros:', insertParams);
+        
+        await client.query(insertQuery, insertParams);
+        
+      } else if (existing.rows[0].version < version) {
+        // Atualizar registro existente
+        const dataKeys = Object.keys(data);
+        const dataValues = Object.values(data);
+        
+        // Campos que podem ser atualizados (não inclui chave primária)
+        const updateFields = [
+          ...dataKeys.map((key, i) => `${key} = $${i + 5}`),  // começa em $5
+          'sync_id = $3',
+          'sync_status = $4',
+          'version = $5',
+          'updated_at = NOW()'
+        ];
+        
+        // Para atualizar is_deleted se fornecido
+        if (is_deleted !== undefined) {
+          updateFields.push(`is_deleted = $${dataKeys.length + 6}`);
+        }
+        
+        const setClause = updateFields.join(', ');
+        
+        const updateQuery = `
+          UPDATE public.lancamentodetalhe
+          SET ${setClause}
+          WHERE uuid_lancamento = $1 AND uuid_detalhecategoria = $2
+        `;
+        
+        // Montar array de parâmetros na ordem correta
+        const updateParams = [
+          uuid_lancamento,
+          uuid_detalhecategoria,
+          sync_id,
+          sync_status || 'synced',
+          version,
+          ...dataValues
+        ];
+        
+        // Adicionar is_deleted se necessário
+        if (is_deleted !== undefined) {
+          updateParams.push(is_deleted);
+        }
+        
+        console.log('📝 UPDATE lancamentodetalhe:', updateQuery);
+        console.log('📊 Parâmetros:', updateParams);
+        
+        await client.query(updateQuery, updateParams);
+      }
+    }
+
+    await client.query('COMMIT');
+    res.json({ message: `${records.length} registros de lancamentodetalhe sincronizados com sucesso` });
+    
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('❌ Erro na sincronização de lancamentodetalhe:', err);
+    res.status(500).json({ error: `Erro ao sincronizar lancamentodetalhe: ${err.message}` });
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Função específica para pull de lancamentodetalhe
+ */
+async function pullLancamentoDetalhe(req, res) {
+  const userId = req.userId;
+  const { last_sync, device_id } = req.query;
+
+  try {
+    let query = `SELECT * FROM public.lancamentodetalhe WHERE is_deleted = 0`;
+    const params = [];
+
+    if (last_sync) {
+      query += ` AND updated_at > $${params.length + 1}`;
+      params.push(last_sync);
+    }
+
+    query += ` ORDER BY updated_at DESC`;
+    const result = await pool.query(query, params);
+
+    res.json({
+      table: 'lancamentodetalhe',
+      records: result.rows,
+      count: result.rows.length,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('❌ Erro no pull de lancamentodetalhe:', err);
+    res.status(500).json({ error: `Erro ao buscar dados de lancamentodetalhe: ${err.message}` });
   }
 }
 
@@ -307,9 +531,9 @@ app.get('/api/v1/sync/detalhecategoria', authenticate, (req, res) => pullTable(r
 app.post('/api/v1/sync/lancamentos', authenticate, (req, res) => syncTable(req, res, 'lancamentos', 'public'));
 app.get('/api/v1/sync/lancamentos', authenticate, (req, res) => pullTable(req, res, 'lancamentos', 'public'));
 
-// Tabela: lancamentodetalhe
-app.post('/api/v1/sync/lancamentodetalhe', authenticate, (req, res) => syncTable(req, res, 'lancamentodetalhe', 'public'));
-app.get('/api/v1/sync/lancamentodetalhe', authenticate, (req, res) => pullTable(req, res, 'lancamentodetalhe', 'public'));
+// Tabela: lancamentodetalhe - USANDO TRATAMENTO ESPECIAL
+app.post('/api/v1/sync/lancamentodetalhe', authenticate, syncLancamentoDetalhe);
+app.get('/api/v1/sync/lancamentodetalhe', authenticate, pullLancamentoDetalhe);
 
 // Tabela: orcamentos
 app.post('/api/v1/sync/orcamentos', authenticate, (req, res) => syncTable(req, res, 'orcamentos', 'public'));
