@@ -207,10 +207,6 @@ async function syncTable(req, res, tableName, schema, idField = 'uuid') {
           is_deleted !== undefined ? is_deleted : 0
         ];
         
-        // TODO - remover quando do envio para produção
-        console.log('📝 INSERT Query:', insertQuery);
-        console.log('📊 Parâmetros:', insertParams);
-        
         await client.query(insertQuery, insertParams);
         
       } else if (existing.rows[0].version < version) {
@@ -254,10 +250,6 @@ async function syncTable(req, res, tableName, schema, idField = 'uuid') {
         if (is_deleted !== undefined) {
           updateParams.push(is_deleted);
         }
-        
-        // TODO - remover quando do envio para produção
-        console.log('📝 UPDATE Query:', updateQuery);
-        console.log('📊 Parâmetros:', updateParams);
         
         await client.query(updateQuery, updateParams);
       }
@@ -334,7 +326,7 @@ async function syncLancamentoDetalhe(req, res) {
         created_at, 
         updated_at, 
         is_deleted,
-        ...data 
+        ...data
       } = record;
 
       // Validação: os campos da chave primária são obrigatórios
@@ -387,10 +379,7 @@ async function syncLancamentoDetalhe(req, res) {
           updated_at || new Date(),
           is_deleted !== undefined ? is_deleted : 0
         ];
-        
-        console.log('📝 INSERT lancamentodetalhe:', insertQuery);
-        console.log('📊 Parâmetros:', insertParams);
-        
+	
         await client.query(insertQuery, insertParams);
         
       } else if (existing.rows[0].version < version) {
@@ -434,9 +423,6 @@ async function syncLancamentoDetalhe(req, res) {
         if (is_deleted !== undefined) {
           updateParams.push(is_deleted);
         }
-        
-        console.log('📝 UPDATE lancamentodetalhe:', updateQuery);
-        console.log('📊 Parâmetros:', updateParams);
         
         await client.query(updateQuery, updateParams);
       }
@@ -528,8 +514,8 @@ app.post('/api/v1/sync/detalhecategoria', authenticate, (req, res) => syncTable(
 app.get('/api/v1/sync/detalhecategoria', authenticate, (req, res) => pullTable(req, res, 'detalhecategoria', 'public'));
 
 // Tabela: lancamentos
-app.post('/api/v1/sync/lancamentos', authenticate, (req, res) => syncTable(req, res, 'lancamentos', 'public'));
-app.get('/api/v1/sync/lancamentos', authenticate, (req, res) => pullTable(req, res, 'lancamentos', 'public'));
+app.post('/api/v1/sync/lancamento', authenticate, (req, res) => syncTable(req, res, 'lancamentos', 'public'));
+app.get('/api/v1/sync/lancamento', authenticate, (req, res) => pullTable(req, res, 'lancamentos', 'public'));
 
 // Tabela: lancamentodetalhe - USANDO TRATAMENTO ESPECIAL
 app.post('/api/v1/sync/lancamentodetalhe', authenticate, syncLancamentoDetalhe);
@@ -553,9 +539,20 @@ app.get('/health', (_, res) => {
 // Pull completo (todas as tabelas)
 app.get('/api/v1/sync/full', authenticate, async (req, res) => {
   const tables = [
-    'categoria', 'tipo_conta', 'instituicoes', 'contas', 'contrapartes',
-    'aliases', 'locais', 'moeda', 'cotacao', 'detalhecategoria',
-    'lancamentos', 'lancamentodetalhe', 'orcamentos', 'orcamentocategoria'
+    'moeda',
+    'categoria',
+    'tipo_conta',
+    'instituicoes',
+    'contrapartes',
+    'orcamentos',
+    'detalhecategoria',
+    'contas',
+    'cotacao',
+    'aliases',
+    'locais',
+    'orcamentocategoria',
+    'lancamentos',
+    'lancamentodetalhe'
   ];
 
   try {
@@ -573,10 +570,21 @@ app.get('/api/v1/sync/full', authenticate, async (req, res) => {
 // Status da sincronização
 app.get('/api/v1/sync/status', authenticate, async (req, res) => {
   const tables = [
-    'categoria', 'tipo_conta', 'instituicoes', 'contas', 'contrapartes',
-    'aliases', 'locais', 'moeda', 'cotacao', 'detalhecategoria',
-    'lancamentos', 'lancamentodetalhe', 'orcamentos', 'orcamentocategoria'
-  ];
+    'moeda',
+    'categoria',
+    'tipo_conta',
+    'instituicoes',
+    'contrapartes',
+    'orcamentos',
+    'detalhecategoria',
+    'contas',
+    'cotacao',
+    'aliases',
+    'locais',
+    'orcamentocategoria',
+    'lancamentos',
+    'lancamentodetalhe'
+  ];	
 
   try {
     const status = {};
